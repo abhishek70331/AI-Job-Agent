@@ -1,0 +1,25 @@
+const express = require('express');
+const {
+  getJobs,
+  getSavedJobs,
+  postGenerateResume,
+  postApplyJob,
+} = require('./controllers');
+
+const router = express.Router();
+
+// Job scraping (scrape now and store in DB)
+router.get('/jobs', getJobs);
+
+// Get saved jobs from Postgres
+router.get('/jobs/saved', getSavedJobs);
+
+// AI resume generation
+router.post('/resume/generate', postGenerateResume);
+
+// Job application automation
+router.post('/applications/apply', postApplyJob);
+
+module.exports = router;
+
+
