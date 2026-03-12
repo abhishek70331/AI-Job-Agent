@@ -1,4 +1,4 @@
-const { automateJobApplication, scrapeAndStoreLeverJobs } = require('./services');
+const { automateJobApplication, fetchLeverJobs } = require('./services');
 const { generateAiResume } = require('./aiService');
 const { query } = require('./db');
 
@@ -6,22 +6,30 @@ const { query } = require('./db');
 async function getJobs(req, res) {
   try {
     const { boardUrl } = req.query;
+
     if (!boardUrl) {
       return res.status(400).json({ error: 'Missing boardUrl query param' });
     }
 
-    const jobs = await scrapeAndStoreLeverJobs(boardUrl);
+    const jobs = await fetchLeverJobs(boardUrl);
+
     res.json({ jobs });
+
   } catch (err) {
+
     console.error('Error in getJobs:', err);
+
     res.status(500).json({ error: 'Failed to fetch jobs' });
+
   }
 }
 
 // AI resume generation
 async function postGenerateResume(req, res) {
   try {
+
     const { jobDescription, userProfile } = req.body || {};
+
     if (!jobDescription || !userProfile) {
       return res
         .status(400)
@@ -29,17 +37,24 @@ async function postGenerateResume(req, res) {
     }
 
     const result = await generateAiResume({ jobDescription, userProfile });
+
     res.json(result);
+
   } catch (err) {
+
     console.error('Error in postGenerateResume:', err);
+
     res.status(500).json({ error: 'Failed to generate resume' });
+
   }
 }
 
-// Job application automation
+// Job automation
 async function postApplyJob(req, res) {
   try {
+
     const { applicationUrl, resumeText, userProfile } = req.body || {};
+
     if (!applicationUrl || !resumeText || !userProfile) {
       return res.status(400).json({
         error: 'applicationUrl, resumeText, and userProfile are required',
@@ -53,22 +68,32 @@ async function postApplyJob(req, res) {
     });
 
     res.json(result);
+
   } catch (err) {
+
     console.error('Error in postApplyJob:', err);
+
     res.status(500).json({ error: 'Failed to automate job application' });
+
   }
 }
 
-// Get jobs stored in Postgres
+// Get saved jobs
 async function getSavedJobs(req, res) {
   try {
+
     const result = await query(
       'SELECT id, source, title, location, team, commitment, url, scraped_at FROM jobs ORDER BY scraped_at DESC LIMIT 100'
     );
+
     res.json({ jobs: result.rows });
+
   } catch (err) {
+
     console.error('Error in getSavedJobs:', err);
+
     res.status(500).json({ error: 'Failed to fetch saved jobs' });
+
   }
 }
 
@@ -78,4 +103,3 @@ module.exports = {
   postApplyJob,
   getSavedJobs,
 };
-

@@ -1,127 +1,216 @@
-const { chromium } = require('playwright');
-const { query } = require('./db');
+const axios = require("axios");
+const { query } = require("./db");
 
 /**
- * Scrape jobs from a Lever-hosted job board (e.g. Lever).
- *
- * @param {string} boardUrl - Full URL to the Lever job board or filtered view.
- *                            Example: "https://jobs.lever.co/<company>"
- * @returns {Promise<Array>} Array of job objects.
+ * Extract company slug from Lever URL
+ * Example: https://jobs.lever.co/welocalize → welocalize
+ */
+function extractCompany(boardUrl) {
+  const parts = boardUrl.split("/");
+  return parts[parts.length - 1] || parts[parts.length - 2];
+}
+
+/**
+ * Fetch jobs from Lever API and save to database
  */
 async function fetchLeverJobs(boardUrl) {
-  if (!boardUrl || typeof boardUrl !== 'string') {
-    throw new Error('A valid Lever board URL string is required');
+
+  if (!boardUrl || typeof boardUrl !== "string") {
+    throw new Error("A valid Lever board URL string is required");
   }
 
-  const browser = await chromium.launch({
-    headless: true,
-  });
+  const company = extractCompany(boardUrl);
 
-  const page = await browser.newPage();
+  const apiUrl = `https://api.lever.co/v0/postings/${company}?mode=json`;
 
   try {
-    await page.goto(boardUrl, { waitUntil: 'networkidle' });
 
-    await page.waitForTimeout(2000);
+    const response = await axios.get(apiUrl);
 
-    const jobs = await page.$$eval('div.posting', (cards) =>
-      cards.map((card) => {
-        const titleEl = card.querySelector('.posting-title h5');
-        const locationEl = card.querySelector('.sort-by-location');
-        const teamEl = card.querySelector('.sort-by-team');
-        const commitmentEl = card.querySelector('.sort-by-commitment');
-        const linkEl = card.querySelector('a');
+    const jobs = response.data.map(job => ({
+      title: job.text,
+      team: job.categories?.team || "",
+      location: job.categories?.location || "",
+      url: job.hostedUrl,
+      source: "lever",
+      description: job.descriptionPlain || ""
+    }));
 
-        const title = titleEl ? titleEl.textContent.trim() : null;
-        const location = locationEl ? locationEl.textContent.trim() : null;
-        const team = teamEl ? teamEl.textContent.trim() : null;
-        const commitment = commitmentEl ? commitmentEl.textContent.trim() : null;
-        const url = linkEl ? linkEl.href : null;
 
-        return {
-          title,
-          location,
-          team,
-          commitment,
-          url,
-        };
-      })
-    );
+    // Save jobs to database
+    for (const job of jobs) {
+
+      await query(
+        `
+        INSERT INTO jobs (title, team, location, url, source)
+        VALUES ($1,$2,$3,$4,$5)
+        ON CONFLICT (url) DO NOTHING
+        `,
+        [
+          job.title,
+          job.team,
+          job.location,
+          job.url,
+          job.source
+        ]
+      );
+      // await query(
+      //   `
+      //   INSERT INTO jobs (title, team, location, url, source, description)
+      //   VALUES ($1,$2,$3,$4,$5,$6)
+      //   ON CONFLICT (url) DO NOTHING
+      //   `,
+      //   [
+      //     job.title,
+      //     job.team,
+      //     job.location,
+      //     job.url,
+      //     job.source,
+      //     job.description
+      //   ]
+      // );
+
+    }
 
     return jobs;
-  } finally {
-    await browser.close();
-  }
-}
 
-/**
- * Scrape jobs from Lever and store them in the jobs table.
- * Returns the scraped jobs (whether newly inserted or already existing).
- */
-async function scrapeAndStoreLeverJobs(boardUrl) {
-  const jobs = await fetchLeverJobs(boardUrl);
+  } catch (error) {
 
-  for (const job of jobs) {
-    const { title, location, team, commitment, url } = job;
+    console.error("Lever API error:", error.message);
 
-    // Skip if no URL (we use url as a natural unique key)
-    if (!url) continue;
+    throw new Error("Failed to fetch jobs");
 
-    await query(
-      `
-      INSERT INTO jobs (source, title, location, team, commitment, url)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (url) DO UPDATE
-      SET
-        title = EXCLUDED.title,
-        location = EXCLUDED.location,
-        team = EXCLUDED.team,
-        commitment = EXCLUDED.commitment,
-        source = EXCLUDED.source
-      `,
-      ['lever', title, location, team, commitment, url]
-    );
-  }
-
-  return jobs;
-}
-
-/**
- * Automate job application using Playwright.
- * This will typically:
- * - visit application URL
- * - fill forms with user data and resume
- * - submit the application
- */
-async function automateJobApplication({ applicationUrl, resumeText, userProfile }) {
-  if (!applicationUrl) {
-    throw new Error('applicationUrl is required');
-  }
-
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
-
-  try {
-    await page.goto(applicationUrl, { waitUntil: 'networkidle' });
-
-    // TODO: Adjust selectors/steps for specific job boards / forms.
-    // Example pseudo-steps:
-    // await page.fill('input[name="name"]', userProfile.name);
-    // await page.fill('input[name="email"]', userProfile.email);
-    // await page.fill('textarea[name="resume"]', resumeText);
-    // await page.click('button[type="submit"]');
-
-    await page.waitForTimeout(1000);
-
-    return { success: true };
-  } finally {
-    await browser.close();
   }
 }
 
 module.exports = {
-  fetchLeverJobs,
-  automateJobApplication,
-  scrapeAndStoreLeverJobs,
+  fetchLeverJobs
 };
+
+// const { chromium } = require('playwright');
+// const { query } = require('./db');
+
+// /**
+//  * Scrape jobs from a Lever-hosted job board (e.g. Lever).
+//  *
+//  * @param {string} boardUrl - Full URL to the Lever job board or filtered view.
+//  *                            Example: "https://jobs.lever.co/<company>"
+//  * @returns {Promise<Array>} Array of job objects.
+//  */
+// async function fetchLeverJobs(boardUrl) {
+//   if (!boardUrl || typeof boardUrl !== 'string') {
+//     throw new Error('A valid Lever board URL string is required');
+//   }
+
+//   const browser = await chromium.launch({
+//     headless: true,
+//   });
+
+//   const page = await browser.newPage();
+
+//   try {
+//     await page.goto(boardUrl, { waitUntil: 'networkidle' });
+
+//     await page.waitForTimeout(2000);
+
+//     const jobs = await page.$$eval('div.posting', (cards) =>
+//       cards.map((card) => {
+//         const titleEl = card.querySelector('.posting-title h5');
+//         const locationEl = card.querySelector('.sort-by-location');
+//         const teamEl = card.querySelector('.sort-by-team');
+//         const commitmentEl = card.querySelector('.sort-by-commitment');
+//         const linkEl = card.querySelector('a');
+
+//         const title = titleEl ? titleEl.textContent.trim() : null;
+//         const location = locationEl ? locationEl.textContent.trim() : null;
+//         const team = teamEl ? teamEl.textContent.trim() : null;
+//         const commitment = commitmentEl ? commitmentEl.textContent.trim() : null;
+//         const url = linkEl ? linkEl.href : null;
+
+//         return {
+//           title,
+//           location,
+//           team,
+//           commitment,
+//           url,
+//         };
+//       })
+//     );
+
+//     return jobs;
+//   } finally {
+//     await browser.close();
+//   }
+// }
+
+// /**
+//  * Scrape jobs from Lever and store them in the jobs table.
+//  * Returns the scraped jobs (whether newly inserted or already existing).
+//  */
+// async function scrapeAndStoreLeverJobs(boardUrl) {
+//   const jobs = await fetchLeverJobs(boardUrl);
+
+//   for (const job of jobs) {
+//     const { title, location, team, commitment, url } = job;
+
+//     // Skip if no URL (we use url as a natural unique key)
+//     if (!url) continue;
+
+//     await query(
+//       `
+//       INSERT INTO jobs (source, title, location, team, commitment, url)
+//       VALUES ($1, $2, $3, $4, $5, $6)
+//       ON CONFLICT (url) DO UPDATE
+//       SET
+//         title = EXCLUDED.title,
+//         location = EXCLUDED.location,
+//         team = EXCLUDED.team,
+//         commitment = EXCLUDED.commitment,
+//         source = EXCLUDED.source
+//       `,
+//       ['lever', title, location, team, commitment, url]
+//     );
+//   }
+
+//   return jobs;
+// }
+
+// /**
+//  * Automate job application using Playwright.
+//  * This will typically:
+//  * - visit application URL
+//  * - fill forms with user data and resume
+//  * - submit the application
+//  */
+// async function automateJobApplication({ applicationUrl, resumeText, userProfile }) {
+//   if (!applicationUrl) {
+//     throw new Error('applicationUrl is required');
+//   }
+
+//   const browser = await chromium.launch({ headless: true });
+//   const page = await browser.newPage();
+
+//   try {
+//     await page.goto(applicationUrl, { waitUntil: 'networkidle' });
+
+//     // TODO: Adjust selectors/steps for specific job boards / forms.
+//     // Example pseudo-steps:
+//     // await page.fill('input[name="name"]', userProfile.name);
+//     // await page.fill('input[name="email"]', userProfile.email);
+//     // await page.fill('textarea[name="resume"]', resumeText);
+//     // await page.click('button[type="submit"]');
+
+//     await page.waitForTimeout(1000);
+
+//     return { success: true };
+//   } finally {
+//     await browser.close();
+//   }
+// }
+
+// module.exports = {
+//   fetchLeverJobs,
+//   automateJobApplication,
+//   scrapeAndStoreLeverJobs,
+// };
 
